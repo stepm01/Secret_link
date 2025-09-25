@@ -6,18 +6,35 @@ const Body = () => {
   const [copied, setCopied] = useState(false);
   const [showSecureLinkPage, setShowSecureLinkPage] = useState(false);
   const [secretId, setSecretId] = useState("");
+  const [status, setStatus] = useState({ type: null, message: "" });
+  const [generatedLink, setGeneratedLink] = useState("");
+  const [isProcessing, setIsProcessing] = useState(false);
 
   useEffect(() => {
-    const url = window.location.href;
-    const id = url.split("/").pop();
+    if (typeof window === "undefined") {
+      return;
+    }
 
-    if (id && /^[A-Za-z0-9]+$/.test(id)) {
-      setShowSecureLinkPage(true);
-      setSecretId(id);
+    try {
+      const pathSegments = window.location.pathname.split("/").filter(Boolean);
+      const potentialId = pathSegments[pathSegments.length - 1];
+
+      if (potentialId && /^[A-Za-z0-9]+$/.test(potentialId)) {
+        setShowSecureLinkPage(true);
+        setSecretId(potentialId);
+      }
+    } catch (error) {
+      console.error("Failed to parse current URL", error);
     }
   }, []);
 
   const handleSecretChange = (e) => {
+    if (status.type) {
+      setStatus({ type: null, message: "" });
+    }
+    if (generatedLink) {
+      setGeneratedLink("");
+    }
     setSecret(e.target.value);
   };
 
@@ -25,24 +42,12 @@ const Body = () => {
     return window.crypto.getRandomValues(new Uint8Array(32));
   };
 
-  const deriveKey = async (password, salt) => {
-    const keyMaterial = await window.crypto.subtle.importKey(
+  const importAesKey = async (keyMaterial) => {
+    return window.crypto.subtle.importKey(
       "raw",
-      password,
-      { name: "PBKDF2" },
-      false,
-      ["deriveKey"]
-    );
-    return await window.crypto.subtle.deriveKey(
-      {
-        name: "PBKDF2",
-        salt: salt,
-        iterations: 100000,
-        hash: "SHA-256",
-      },
       keyMaterial,
-      { name: "AES-GCM", length: 256 },
-      true,
+      { name: "AES-GCM" },
+      false,
       ["encrypt", "decrypt"]
     );
   };
@@ -62,35 +67,83 @@ const Body = () => {
   };
 
   const createSecureLink = async () => {
-    const password = generatePassword();
-    const salt = window.crypto.getRandomValues(new Uint8Array(16));
-    const key = await deriveKey(password, salt);
-    const { encrypted, iv } = await encryptMessage(key, secret);
+    if (isProcessing) {
+      return;
+    }
 
-    const encryptedBase64 = btoa(
-      String.fromCharCode(...new Uint8Array(encrypted))
-    );
-    const ivBase64 = btoa(String.fromCharCode(...iv));
-    const saltBase64 = btoa(String.fromCharCode(...salt));
+    const trimmedSecret = secret.trim();
+    if (!trimmedSecret) {
+      setStatus({ type: "error", message: "Please enter a secret before generating a link." });
+      return;
+    }
 
-    const response = await fetch("/api/store-secret", {
-      method: "POST",
-      body: JSON.stringify({
-        encrypted: encryptedBase64,
-        iv: ivBase64,
-        salt: saltBase64,
-      }),
-      headers: { "Content-Type": "application/json" },
-    });
+    setIsProcessing(true);
+    setStatus({ type: null, message: "" });
+    setGeneratedLink("");
 
-    const { link } = await response.json();
+    try {
+      const password = generatePassword();
+      const key = await importAesKey(password);
+      const { encrypted, iv } = await encryptMessage(key, trimmedSecret);
+      const salt = window.crypto.getRandomValues(new Uint8Array(16));
 
-    navigator.clipboard.writeText(link);
-    setCopied(true);
-    setSecret("");
-    setTimeout(() => {
-      setCopied(false);
-    }, 5000);
+      const encryptedBase64 = toBase64(new Uint8Array(encrypted));
+      const ivBase64 = toBase64(iv);
+      const saltBase64 = toBase64(salt);
+
+      const response = await fetch("/api/store-secret", {
+        method: "POST",
+        body: JSON.stringify({
+          encrypted: encryptedBase64,
+          iv: ivBase64,
+          salt: saltBase64,
+        }),
+        headers: { "Content-Type": "application/json" },
+      });
+
+      const data = await safeParseJson(response);
+
+      if (!response.ok) {
+        const message = data?.error || "Failed to store the secret. Please try again.";
+        throw new Error(message);
+      }
+
+      if (!data?.link) {
+        throw new Error("Server did not return a secure link.");
+      }
+
+      const shareableLink = data.link;
+      const clipboardSupported = Boolean(navigator?.clipboard?.writeText);
+
+      try {
+        if (!clipboardSupported) {
+          throw new Error("Clipboard API is not available.");
+        }
+
+        await navigator.clipboard.writeText(shareableLink);
+        setCopied(true);
+        setStatus({ type: "success", message: "Secure link copied to clipboard." });
+        setTimeout(() => setCopied(false), 5000);
+      } catch (clipboardError) {
+        console.warn("Failed to copy to clipboard", clipboardError);
+        setCopied(false);
+        setGeneratedLink(shareableLink);
+        setStatus({
+          type: "info",
+          message: "Copy to clipboard failed. Use the link below to copy manually.",
+        });
+      }
+
+      setSecret("");
+    } catch (error) {
+      console.error("Failed to create secure link", error);
+      setStatus({
+        type: "error",
+        message: error instanceof Error ? error.message : "Unexpected error. Please try again.",
+      });
+    } finally {
+      setIsProcessing(false);
+    }
   };
 
   return (
@@ -105,6 +158,19 @@ const Body = () => {
           <p style={subHeaderStyle}>
             Client-side encrypted one-time secrets since 2016
           </p>
+          {status.message && (
+            <p
+              style={
+                status.type === "error"
+                  ? errorMessageStyle
+                  : status.type === "success"
+                  ? successMessageStyle
+                  : infoMessageStyle
+              }
+            >
+              {status.message}
+            </p>
+          )}
           <div style={inputContainerStyle}>
             <input
               type="text"
@@ -112,12 +178,32 @@ const Body = () => {
               value={secret}
               onChange={handleSecretChange}
               style={inputStyle}
-              disabled={copied}
+              disabled={isProcessing}
             />
-            <button onClick={createSecureLink} style={buttonStyle}>
-              {copied ? "It was copied" : "Create Secure Link"}
+            <button
+              onClick={createSecureLink}
+              style={buttonStyle}
+              disabled={isProcessing || !secret.trim()}
+            >
+              {isProcessing
+                ? "Creating..."
+                : copied
+                ? "Link copied!"
+                : "Create Secure Link"}
             </button>
           </div>
+          {generatedLink && (
+            <div style={manualCopyContainerStyle}>
+              <label style={manualCopyLabelStyle}>Secure link</label>
+              <input
+                type="text"
+                readOnly
+                value={generatedLink}
+                style={manualCopyInputStyle}
+                onFocus={(event) => event.target.select()}
+              />
+            </div>
+          )}
         </>
       )}
     </div>
@@ -166,6 +252,55 @@ const buttonStyle = {
   marginTop: "10px",
   width: "50%",
   maxWidth: "300px",
+};
+
+const successMessageStyle = {
+  color: "#2e7d32",
+  marginBottom: "15px",
+};
+
+const errorMessageStyle = {
+  color: "#c62828",
+  marginBottom: "15px",
+};
+
+const infoMessageStyle = {
+  color: "#2c3e50",
+  marginBottom: "15px",
+};
+
+const manualCopyContainerStyle = {
+  marginTop: "20px",
+  display: "flex",
+  flexDirection: "column",
+  alignItems: "center",
+  gap: "5px",
+};
+
+const manualCopyInputStyle = {
+  width: "80%",
+  maxWidth: "500px",
+  padding: "12px",
+  borderRadius: "8px",
+  border: "1px solid #ccc",
+  fontSize: "16px",
+};
+
+const manualCopyLabelStyle = {
+  fontSize: "16px",
+  fontWeight: "500",
+};
+
+const toBase64 = (bytes) => {
+  return window.btoa(String.fromCharCode(...bytes));
+};
+
+const safeParseJson = async (response) => {
+  try {
+    return await response.json();
+  } catch (error) {
+    return null;
+  }
 };
 
 export default Body;
