@@ -151,7 +151,7 @@ const Body = () => {
       {showSecureLinkPage ? (
         <SecureLinkPage secretId={secretId} />
       ) : (
-        <>
+        <div style={contentWrapperStyle}>
           <h1 style={headerStyle}>
             Securely send and receive sensitive information
           </h1>
@@ -171,47 +171,59 @@ const Body = () => {
               {status.message}
             </p>
           )}
-          <div style={inputContainerStyle}>
-            <input
-              type="text"
-              placeholder="Enter a secret here!"
-              value={secret}
-              onChange={handleSecretChange}
-              style={inputStyle}
-              disabled={isProcessing}
-            />
-            <button
-              onClick={createSecureLink}
-              style={buttonStyle}
-              disabled={isProcessing || !secret.trim()}
-            >
-              {isProcessing
-                ? "Creating..."
-                : copied
-                ? "Link copied!"
-                : "Create Secure Link"}
-            </button>
-          </div>
-          {generatedLink && (
-            <div style={manualCopyContainerStyle}>
-              <label style={manualCopyLabelStyle}>Secure link</label>
+          <div style={cardStyle}>
+            <div style={inputContainerStyle}>
               <input
                 type="text"
-                readOnly
-                value={generatedLink}
-                style={manualCopyInputStyle}
-                onFocus={(event) => event.target.select()}
+                placeholder="Enter a secret here!"
+                value={secret}
+                onChange={handleSecretChange}
+                style={inputStyle}
+                disabled={isProcessing}
               />
+              <button
+                onClick={createSecureLink}
+                style={getButtonStyle(isProcessing || !secret.trim())}
+                disabled={isProcessing || !secret.trim()}
+              >
+                {isProcessing
+                  ? "Creating..."
+                  : copied
+                  ? "Link copied!"
+                  : "Create Secure Link"}
+              </button>
             </div>
-          )}
-        </>
+            {generatedLink && (
+              <div style={manualCopyContainerStyle}>
+                <label style={manualCopyLabelStyle}>Secure link</label>
+                <input
+                  type="text"
+                  readOnly
+                  value={generatedLink}
+                  style={manualCopyInputStyle}
+                  onFocus={(event) => event.target.select()}
+                />
+              </div>
+            )}
+          </div>
+        </div>
       )}
     </div>
   );
 };
 
 const bodyStyle = {
+  minHeight: "100vh",
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "center",
   padding: "40px",
+  background: "linear-gradient(135deg, #f0f4ff 0%, #e0ecff 50%, #f9fcff 100%)",
+};
+
+const contentWrapperStyle = {
+  maxWidth: "720px",
+  width: "100%",
   textAlign: "center",
 };
 
@@ -225,33 +237,43 @@ const subHeaderStyle = {
   marginBottom: "30px",
 };
 
+const cardStyle = {
+  marginTop: "20px",
+  padding: "30px",
+  borderRadius: "16px",
+  backgroundColor: "#ffffff",
+  boxShadow: "0 20px 45px rgba(79, 114, 205, 0.18)",
+};
+
 const inputContainerStyle = {
   display: "flex",
   flexDirection: "column",
-  alignItems: "center",
+  alignItems: "stretch",
+  gap: "15px",
 };
 
 const inputStyle = {
   padding: "30px",
   fontSize: "18px",
-  margin: "10px 0",
-  width: "80%",
-  borderRadius: "10px",
-  border: "1px solid #ccc",
+  borderRadius: "12px",
+  border: "1px solid #d7ddf3",
   boxSizing: "border-box",
+  width: "100%",
+  outline: "none",
+  transition: "border-color 0.2s ease, box-shadow 0.2s ease",
 };
 
 const buttonStyle = {
-  padding: "15px 30px",
-  backgroundColor: "#4B0082",
+  padding: "16px 28px",
+  background: "linear-gradient(135deg, #5a2dd4 0%, #7e62ff 100%)",
   color: "#fff",
   border: "none",
-  borderRadius: "10px",
-  cursor: "pointer",
+  borderRadius: "12px",
   fontSize: "18px",
-  marginTop: "10px",
-  width: "50%",
-  maxWidth: "300px",
+  fontWeight: "600",
+  transition: "transform 0.2s ease, box-shadow 0.2s ease, opacity 0.2s ease",
+  boxShadow: "0 12px 25px rgba(90, 45, 212, 0.25)",
+  width: "100%",
 };
 
 const successMessageStyle = {
@@ -270,20 +292,21 @@ const infoMessageStyle = {
 };
 
 const manualCopyContainerStyle = {
-  marginTop: "20px",
+  marginTop: "24px",
   display: "flex",
   flexDirection: "column",
-  alignItems: "center",
-  gap: "5px",
+  gap: "8px",
 };
 
 const manualCopyInputStyle = {
-  width: "80%",
-  maxWidth: "500px",
-  padding: "12px",
-  borderRadius: "8px",
-  border: "1px solid #ccc",
+  width: "100%",
+  maxWidth: "100%",
+  padding: "16px",
+  borderRadius: "10px",
+  border: "1px solid #d7ddf3",
   fontSize: "16px",
+  backgroundColor: "#f7f9ff",
+  boxSizing: "border-box",
 };
 
 const manualCopyLabelStyle = {
@@ -302,5 +325,12 @@ const safeParseJson = async (response) => {
     return null;
   }
 };
+
+const getButtonStyle = (isDisabled) => ({
+  ...buttonStyle,
+  opacity: isDisabled ? 0.6 : 1,
+  cursor: isDisabled ? "not-allowed" : "pointer",
+  transform: isDisabled ? "none" : "translateY(0)",
+});
 
 export default Body;
