@@ -1,14 +1,21 @@
 import React, { useEffect, useState } from "react";
 import SecureLinkPage from "./ShowLink/SecureLinkPage";
+import useSecureLink from "../hooks/useSecureLink";
 
 const Body = () => {
   const [secret, setSecret] = useState("");
-  const [copied, setCopied] = useState(false);
   const [showSecureLinkPage, setShowSecureLinkPage] = useState(false);
   const [secretId, setSecretId] = useState("");
-  const [status, setStatus] = useState({ type: null, message: "" });
-  const [generatedLink, setGeneratedLink] = useState("");
-  const [isProcessing, setIsProcessing] = useState(false);
+  const {
+    status,
+    copied,
+    generatedLink,
+    isProcessing,
+    shareSupported,
+    createLink,
+    shareLink,
+    resetFeedback,
+  } = useSecureLink();
 
   useEffect(() => {
     if (typeof window === "undefined") {
@@ -28,122 +35,26 @@ const Body = () => {
     }
   }, []);
 
-  const handleSecretChange = (e) => {
-    if (status.type) {
-      setStatus({ type: null, message: "" });
+  const handleSecretChange = (event) => {
+    if (status.type || generatedLink) {
+      resetFeedback();
     }
-    if (generatedLink) {
-      setGeneratedLink("");
-    }
-    setSecret(e.target.value);
+    setSecret(event.target.value);
   };
 
-  const generatePassword = () => {
-    return window.crypto.getRandomValues(new Uint8Array(32));
-  };
-
-  const importAesKey = async (keyMaterial) => {
-    return window.crypto.subtle.importKey(
-      "raw",
-      keyMaterial,
-      { name: "AES-GCM" },
-      false,
-      ["encrypt", "decrypt"]
-    );
-  };
-
-  const encryptMessage = async (key, message) => {
-    const iv = window.crypto.getRandomValues(new Uint8Array(12));
-    const encodedMessage = new TextEncoder().encode(message);
-    const encrypted = await window.crypto.subtle.encrypt(
-      {
-        name: "AES-GCM",
-        iv: iv,
-      },
-      key,
-      encodedMessage
-    );
-    return { encrypted, iv };
-  };
-
-  const createSecureLink = async () => {
+  const handleCreateLink = async () => {
     if (isProcessing) {
       return;
     }
 
-    const trimmedSecret = secret.trim();
-    if (!trimmedSecret) {
-      setStatus({ type: "error", message: "Please enter a secret before generating a link." });
-      return;
-    }
-
-    setIsProcessing(true);
-    setStatus({ type: null, message: "" });
-    setGeneratedLink("");
-
-    try {
-      const password = generatePassword();
-      const key = await importAesKey(password);
-      const { encrypted, iv } = await encryptMessage(key, trimmedSecret);
-      const salt = window.crypto.getRandomValues(new Uint8Array(16));
-
-      const encryptedBase64 = toBase64(new Uint8Array(encrypted));
-      const ivBase64 = toBase64(iv);
-      const saltBase64 = toBase64(salt);
-
-      const response = await fetch("/api/store-secret", {
-        method: "POST",
-        body: JSON.stringify({
-          encrypted: encryptedBase64,
-          iv: ivBase64,
-          salt: saltBase64,
-        }),
-        headers: { "Content-Type": "application/json" },
-      });
-
-      const data = await safeParseJson(response);
-
-      if (!response.ok) {
-        const message = data?.error || "Failed to store the secret. Please try again.";
-        throw new Error(message);
-      }
-
-      if (!data?.link) {
-        throw new Error("Server did not return a secure link.");
-      }
-
-      const shareableLink = data.link;
-      const clipboardSupported = Boolean(navigator?.clipboard?.writeText);
-
-      try {
-        if (!clipboardSupported) {
-          throw new Error("Clipboard API is not available.");
-        }
-
-        await navigator.clipboard.writeText(shareableLink);
-        setCopied(true);
-        setStatus({ type: "success", message: "Secure link copied to clipboard." });
-        setTimeout(() => setCopied(false), 5000);
-      } catch (clipboardError) {
-        console.warn("Failed to copy to clipboard", clipboardError);
-        setCopied(false);
-        setGeneratedLink(shareableLink);
-        setStatus({
-          type: "info",
-          message: "Copy to clipboard failed. Use the link below to copy manually.",
-        });
-      }
-
+    const createdLink = await createLink(secret);
+    if (createdLink) {
       setSecret("");
-    } catch (error) {
-      console.error("Failed to create secure link", error);
-      setStatus({
-        type: "error",
-        message: error instanceof Error ? error.message : "Unexpected error. Please try again.",
-      });
-    } finally {
-      setIsProcessing(false);
     }
+  };
+
+  const handleShareClick = async () => {
+    await shareLink();
   };
 
   return (
@@ -182,7 +93,7 @@ const Body = () => {
                 disabled={isProcessing}
               />
               <button
-                onClick={createSecureLink}
+                onClick={handleCreateLink}
                 style={getButtonStyle(isProcessing || !secret.trim())}
                 disabled={isProcessing || !secret.trim()}
               >
@@ -203,6 +114,15 @@ const Body = () => {
                   style={manualCopyInputStyle}
                   onFocus={(event) => event.target.select()}
                 />
+                {shareSupported && (
+                  <button
+                    type="button"
+                    onClick={handleShareClick}
+                    style={shareButtonStyle}
+                  >
+                    Share Secure Link
+                  </button>
+                )}
               </div>
             )}
           </div>
@@ -314,16 +234,17 @@ const manualCopyLabelStyle = {
   fontWeight: "500",
 };
 
-const toBase64 = (bytes) => {
-  return window.btoa(String.fromCharCode(...bytes));
-};
-
-const safeParseJson = async (response) => {
-  try {
-    return await response.json();
-  } catch (error) {
-    return null;
-  }
+const shareButtonStyle = {
+  marginTop: "12px",
+  alignSelf: "flex-start",
+  background: "transparent",
+  border: "none",
+  color: "#5a2dd4",
+  fontSize: "16px",
+  fontWeight: "600",
+  cursor: "pointer",
+  textDecoration: "underline",
+  padding: 0,
 };
 
 const getButtonStyle = (isDisabled) => ({
