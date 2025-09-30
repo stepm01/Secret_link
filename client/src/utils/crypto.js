@@ -27,7 +27,35 @@ export const generateRandomBytes = (length) => {
   return bytes;
 };
 
-export const deriveKey = async (passwordBytes, saltBytes, iterations = 150000) => {
+const derivePassphraseBytes = async (
+  passphrase,
+  saltBytes,
+  iterations = 200000
+) => {
+  ensureCrypto();
+  const passphraseKey = await window.crypto.subtle.importKey(
+    "raw",
+    TEXT_ENCODER.encode(passphrase),
+    "PBKDF2",
+    false,
+    ["deriveBits"]
+  );
+
+  const derivedBits = await window.crypto.subtle.deriveBits(
+    {
+      name: "PBKDF2",
+      salt: saltBytes,
+      iterations,
+      hash: "SHA-256",
+    },
+    passphraseKey,
+    256
+  );
+
+  return new Uint8Array(derivedBits);
+};
+
+const deriveKey = async (passwordBytes, saltBytes, iterations = 150000) => {
   ensureCrypto();
   const keyMaterial = await window.crypto.subtle.importKey(
     "raw",
@@ -81,10 +109,36 @@ export const decryptToString = async (ciphertextBytes, key, ivBytes) => {
   return TEXT_DECODER.decode(decrypted);
 };
 
-export const createEncryptedPayload = async (plaintext) => {
+const combinePasswordAndPassphrase = async (
+  passwordBytes,
+  passphrase,
+  existingPassphraseSaltBytes = null
+) => {
+  if (!passphrase) {
+    return { combinedBytes: passwordBytes, passphraseSaltBytes: null };
+  }
+
+  const passphraseSaltBytes =
+    existingPassphraseSaltBytes || generateRandomBytes(16);
+  const passphraseBytes = await derivePassphraseBytes(
+    passphrase,
+    passphraseSaltBytes
+  );
+  const combinedBytes = new Uint8Array(passwordBytes.length);
+
+  for (let index = 0; index < passwordBytes.length; index += 1) {
+    combinedBytes[index] = passwordBytes[index] ^ passphraseBytes[index];
+  }
+
+  return { combinedBytes, passphraseSaltBytes };
+};
+
+export const createEncryptedPayload = async (plaintext, options = {}) => {
   const passwordBytes = generateRandomBytes(32);
   const saltBytes = generateRandomBytes(16);
-  const key = await deriveKey(passwordBytes, saltBytes);
+  const { combinedBytes, passphraseSaltBytes } =
+    await combinePasswordAndPassphrase(passwordBytes, options.passphrase);
+  const key = await deriveKey(combinedBytes, saltBytes);
   const { ciphertext, iv } = await encryptString(plaintext, key);
 
   return {
@@ -92,6 +146,10 @@ export const createEncryptedPayload = async (plaintext) => {
     ivBase64: encodeBase64(iv),
     saltBase64: encodeBase64(saltBytes),
     passwordBase64: encodeBase64(passwordBytes),
+    passphraseSaltBase64: passphraseSaltBytes
+      ? encodeBase64(passphraseSaltBytes)
+      : null,
+    requiresPassphrase: Boolean(options.passphrase),
   };
 };
 
@@ -99,19 +157,38 @@ export const decryptPayload = async (
   encryptedBase64,
   ivBase64,
   saltBase64,
-  passwordBase64
+  passwordBase64,
+  options = {}
 ) => {
   const ciphertextBytes = decodeBase64(encryptedBase64);
   const ivBytes = decodeBase64(ivBase64);
   const saltBytes = decodeBase64(saltBase64);
   const passwordBytes = decodeBase64(passwordBase64);
-  const key = await deriveKey(passwordBytes, saltBytes);
+
+  if (options.requiresPassphrase && !options.passphrase) {
+    throw new Error("Passphrase required to decrypt this secret.");
+  }
+
+  const passphraseSaltBytes = options.passphraseSaltBase64
+    ? decodeBase64(options.passphraseSaltBase64)
+    : null;
+
+  const { combinedBytes } = await combinePasswordAndPassphrase(
+    passwordBytes,
+    options.passphrase,
+    passphraseSaltBytes
+  );
+  const key = await deriveKey(combinedBytes, saltBytes);
   return decryptToString(ciphertextBytes, key, ivBytes);
 };
 
 export const extractKeyFromHash = () => {
   if (typeof window === "undefined" || !window.location?.hash) {
-    return "";
+    return {
+      passwordBase64: "",
+      passphraseSaltBase64: "",
+      requiresPassphrase: false,
+    };
   }
 
   const hash = window.location.hash.startsWith("#")
@@ -119,5 +196,9 @@ export const extractKeyFromHash = () => {
     : window.location.hash;
 
   const params = new URLSearchParams(hash);
-  return params.get("key") || "";
+  return {
+    passwordBase64: params.get("key") || "",
+    passphraseSaltBase64: params.get("pps") || "",
+    requiresPassphrase: params.get("pp") === "1",
+  };
 };

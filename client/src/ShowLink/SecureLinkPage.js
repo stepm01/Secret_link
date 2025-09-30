@@ -7,13 +7,23 @@ const SecureLinkPage = ({ secretId }) => {
     type: "loading",
     message: "Loading secret...",
   });
+  const [payload, setPayload] = useState(null);
+  const [keyParams, setKeyParams] = useState({
+    passwordBase64: "",
+    passphraseSaltBase64: "",
+    requiresPassphrase: false,
+  });
+  const [passphrase, setPassphrase] = useState("");
+  const [passphraseError, setPassphraseError] = useState("");
+  const [showPassphrase, setShowPassphrase] = useState(false);
+  const [isDecrypting, setIsDecrypting] = useState(false);
 
   useEffect(() => {
     let isMounted = true;
     const abortController = new AbortController();
-    const passwordFromHash = extractKeyFromHash();
+    const extractedParams = extractKeyFromHash();
 
-    if (!passwordFromHash) {
+    if (!extractedParams.passwordBase64) {
       setStatus({
         type: "error",
         message:
@@ -21,6 +31,17 @@ const SecureLinkPage = ({ secretId }) => {
       });
       return () => abortController.abort();
     }
+
+    if (extractedParams.requiresPassphrase && !extractedParams.passphraseSaltBase64) {
+      setStatus({
+        type: "error",
+        message:
+          "Passphrase metadata is missing. Request a fresh link from the sender.",
+      });
+      return () => abortController.abort();
+    }
+
+    setKeyParams(extractedParams);
 
     const fetchSecret = async () => {
       try {
@@ -53,11 +74,27 @@ const SecureLinkPage = ({ secretId }) => {
           throw new Error("Server returned an incomplete payload.");
         }
 
+        const fetchedPayload = {
+          encrypted: data.encrypted,
+          iv: data.iv,
+          salt: data.salt,
+        };
+
+        setPayload(fetchedPayload);
+
+        if (extractedParams.requiresPassphrase) {
+          setStatus({
+            type: "awaiting-passphrase",
+            message: "Enter the passphrase to view the secret.",
+          });
+          return;
+        }
+
         const decryptedSecret = await decryptPayload(
-          data.encrypted,
-          data.iv,
-          data.salt,
-          passwordFromHash
+          fetchedPayload.encrypted,
+          fetchedPayload.iv,
+          fetchedPayload.salt,
+          extractedParams.passwordBase64
         );
 
         if (!isMounted) {
@@ -75,11 +112,11 @@ const SecureLinkPage = ({ secretId }) => {
           return;
         }
 
-        console.error("Error fetching the secret:", error);
-
         if (error?.name === "AbortError") {
           return;
         }
+
+        console.error("Error fetching the secret:", error);
 
         if (
           error instanceof DOMException ||
@@ -112,6 +149,73 @@ const SecureLinkPage = ({ secretId }) => {
     };
   }, [secretId]);
 
+  const attemptDecrypt = async (passphraseInput) => {
+    if (!payload) {
+      return false;
+    }
+
+    if (!keyParams.passwordBase64) {
+      setPassphraseError(
+        "Missing decryption key metadata. Request a fresh link from the sender."
+      );
+      return false;
+    }
+
+    try {
+      setIsDecrypting(true);
+      const decryptedSecret = await decryptPayload(
+        payload.encrypted,
+        payload.iv,
+        payload.salt,
+        keyParams.passwordBase64,
+        {
+          passphrase: keyParams.requiresPassphrase ? passphraseInput : undefined,
+          passphraseSaltBase64: keyParams.passphraseSaltBase64,
+          requiresPassphrase: keyParams.requiresPassphrase,
+        }
+      );
+
+      setSecret(decryptedSecret);
+      setStatus({ type: "ready", message: "" });
+      setPassphrase("");
+      setPassphraseError("");
+
+      if (typeof window !== "undefined") {
+        window.history.replaceState(null, "", window.location.pathname);
+      }
+
+      return true;
+    } catch (error) {
+      console.error("Failed to decrypt secret", error);
+
+      if (error?.name === "AbortError") {
+        return false;
+      }
+
+      setPassphraseError(
+        error instanceof Error && error.message.includes("Passphrase")
+          ? error.message
+          : "Incorrect passphrase. Please try again."
+      );
+      setStatus({
+        type: "awaiting-passphrase",
+        message: "Enter the correct passphrase to view the secret.",
+      });
+      return false;
+    } finally {
+      setIsDecrypting(false);
+    }
+  };
+
+  const handlePassphraseSubmit = async (event) => {
+    event.preventDefault();
+    if (!passphrase.trim() || isDecrypting) {
+      return;
+    }
+
+    await attemptDecrypt(passphrase.trim());
+  };
+
   const renderContent = () => {
     if (status.type === "loading") {
       return <p>{status.message}</p>;
@@ -121,6 +225,44 @@ const SecureLinkPage = ({ secretId }) => {
       return (
         <div style={inputContainerStyle}>
           <textarea style={inputStyle} readOnly value={secret} />
+        </div>
+      );
+    }
+
+    if (status.type === "awaiting-passphrase") {
+      return (
+        <div style={passphraseGateStyle}>
+          {status.message && <p style={infoTextStyle}>{status.message}</p>}
+          <form onSubmit={handlePassphraseSubmit} style={passphraseFormStyle}>
+            <input
+              type={showPassphrase ? "text" : "password"}
+              value={passphrase}
+              onChange={(event) => {
+                setPassphraseError("");
+                setPassphrase(event.target.value);
+              }}
+              placeholder="Enter passphrase"
+              style={passphraseInputStyle}
+              disabled={isDecrypting}
+            />
+            <label style={passphraseVisibilityLabelStyle}>
+              <input
+                type="checkbox"
+                checked={showPassphrase}
+                onChange={(event) => setShowPassphrase(event.target.checked)}
+                disabled={isDecrypting}
+              />
+              Show passphrase
+            </label>
+            {passphraseError && <p style={passphraseErrorStyle}>{passphraseError}</p>}
+            <button
+              type="submit"
+              style={passphraseSubmitStyle}
+              disabled={!passphrase.trim() || isDecrypting}
+            >
+              {isDecrypting ? "Decrypting..." : "Decrypt secret"}
+            </button>
+          </form>
         </div>
       );
     }
@@ -186,6 +328,60 @@ const inputStyle = {
   border: "1px solid #ccc",
   resize: "none",
   backgroundColor: "#f9f9f9",
+};
+
+const passphraseGateStyle = {
+  width: "100%",
+  maxWidth: "360px",
+  display: "flex",
+  flexDirection: "column",
+  gap: "12px",
+  alignItems: "stretch",
+};
+
+const infoTextStyle = {
+  fontSize: "16px",
+  color: "#2c3e50",
+  margin: 0,
+};
+
+const passphraseFormStyle = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "10px",
+};
+
+const passphraseInputStyle = {
+  padding: "14px",
+  fontSize: "16px",
+  borderRadius: "8px",
+  border: "1px solid #d0d7ec",
+  outline: "none",
+};
+
+const passphraseVisibilityLabelStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  fontSize: "14px",
+  color: "#2c3e50",
+};
+
+const passphraseErrorStyle = {
+  color: "#c62828",
+  fontSize: "14px",
+  margin: 0,
+};
+
+const passphraseSubmitStyle = {
+  padding: "14px",
+  fontSize: "16px",
+  backgroundColor: "#5a2dd4",
+  color: "#fff",
+  border: "none",
+  borderRadius: "10px",
+  cursor: "pointer",
+  fontWeight: "600",
 };
 
 const footerStyle = {

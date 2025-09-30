@@ -2,16 +2,24 @@ import React, { useEffect, useState } from "react";
 import SecureLinkPage from "./ShowLink/SecureLinkPage";
 import useSecureLink from "../hooks/useSecureLink";
 
+const MIN_PASSPHRASE_LENGTH = 6;
+
 const Body = () => {
   const [secret, setSecret] = useState("");
   const [showSecureLinkPage, setShowSecureLinkPage] = useState(false);
   const [secretId, setSecretId] = useState("");
+  const [requirePassphrase, setRequirePassphrase] = useState(false);
+  const [passphrase, setPassphrase] = useState("");
+  const [passphraseConfirm, setPassphraseConfirm] = useState("");
+  const [passphraseError, setPassphraseError] = useState("");
+  const [showPassphrase, setShowPassphrase] = useState(false);
   const {
     status,
     copied,
     generatedLink,
     isProcessing,
     shareSupported,
+    linkRequiresPassphrase,
     createLink,
     shareLink,
     resetFeedback,
@@ -39,7 +47,41 @@ const Body = () => {
     if (status.type || generatedLink) {
       resetFeedback();
     }
+    if (passphraseError) {
+      setPassphraseError("");
+    }
     setSecret(event.target.value);
+  };
+
+  const handleRequirePassphraseChange = (event) => {
+    const shouldRequirePassphrase = event.target.checked;
+    setRequirePassphrase(shouldRequirePassphrase);
+    setPassphraseError("");
+
+    if (shouldRequirePassphrase) {
+      resetFeedback();
+    } else {
+      setPassphrase("");
+      setPassphraseConfirm("");
+    }
+  };
+
+  const handlePassphraseChange = (event) => {
+    if (passphraseError) {
+      setPassphraseError("");
+    }
+    setPassphrase(event.target.value);
+  };
+
+  const handlePassphraseConfirmChange = (event) => {
+    if (passphraseError) {
+      setPassphraseError("");
+    }
+    setPassphraseConfirm(event.target.value);
+  };
+
+  const handlePassphraseVisibilityChange = (event) => {
+    setShowPassphrase(event.target.checked);
   };
 
   const handleCreateLink = async () => {
@@ -47,9 +89,37 @@ const Body = () => {
       return;
     }
 
-    const createdLink = await createLink(secret);
+    let sanitizedPassphrase;
+
+    if (requirePassphrase) {
+      const trimmedPassphrase = passphrase.trim();
+      const trimmedConfirm = passphraseConfirm.trim();
+
+      if (trimmedPassphrase.length < MIN_PASSPHRASE_LENGTH) {
+        setPassphraseError(
+          `Passphrase must be at least ${MIN_PASSPHRASE_LENGTH} characters.`
+        );
+        return;
+      }
+
+      if (trimmedPassphrase !== trimmedConfirm) {
+        setPassphraseError("Passphrases do not match.");
+        return;
+      }
+
+      sanitizedPassphrase = trimmedPassphrase;
+    }
+
+    const createdLink = await createLink(secret, {
+      passphrase: sanitizedPassphrase,
+    });
+
     if (createdLink) {
       setSecret("");
+      if (requirePassphrase) {
+        setPassphrase("");
+        setPassphraseConfirm("");
+      }
     }
   };
 
@@ -92,6 +162,52 @@ const Body = () => {
                 style={inputStyle}
                 disabled={isProcessing}
               />
+              <div style={passphraseToggleRowStyle}>
+                <label style={passphraseToggleLabelStyle}>
+                  <input
+                    type="checkbox"
+                    checked={requirePassphrase}
+                    onChange={handleRequirePassphraseChange}
+                    disabled={isProcessing}
+                  />
+                  Require a passphrase to open this secret
+                </label>
+              </div>
+              {requirePassphrase && (
+                <div style={passphraseFieldsStyle}>
+                  <input
+                    type={showPassphrase ? "text" : "password"}
+                    placeholder={`Passphrase (min ${MIN_PASSPHRASE_LENGTH} characters)`}
+                    value={passphrase}
+                    onChange={handlePassphraseChange}
+                    style={passphraseInputStyle}
+                    disabled={isProcessing}
+                  />
+                  <input
+                    type={showPassphrase ? "text" : "password"}
+                    placeholder="Confirm passphrase"
+                    value={passphraseConfirm}
+                    onChange={handlePassphraseConfirmChange}
+                    style={passphraseInputStyle}
+                    disabled={isProcessing}
+                  />
+                  <label style={passphraseVisibilityLabelStyle}>
+                    <input
+                      type="checkbox"
+                      checked={showPassphrase}
+                      onChange={handlePassphraseVisibilityChange}
+                      disabled={isProcessing}
+                    />
+                    Show passphrase
+                  </label>
+                  <p style={passphraseHintStyle}>
+                    Share the passphrase through a separate channel.
+                  </p>
+                  {passphraseError && (
+                    <p style={passphraseErrorStyle}>{passphraseError}</p>
+                  )}
+                </div>
+              )}
               <button
                 onClick={handleCreateLink}
                 style={getButtonStyle(isProcessing || !secret.trim())}
@@ -114,6 +230,11 @@ const Body = () => {
                   style={manualCopyInputStyle}
                   onFocus={(event) => event.target.select()}
                 />
+                {linkRequiresPassphrase && (
+                  <p style={passphraseInfoNoteStyle}>
+                    Requires the passphrase you set above.
+                  </p>
+                )}
                 {shareSupported && (
                   <button
                     type="button"
@@ -211,6 +332,56 @@ const infoMessageStyle = {
   marginBottom: "15px",
 };
 
+const passphraseToggleRowStyle = {
+  display: "flex",
+  alignItems: "center",
+  justifyContent: "flex-start",
+  marginTop: "8px",
+};
+
+const passphraseToggleLabelStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  fontSize: "16px",
+};
+
+const passphraseFieldsStyle = {
+  display: "flex",
+  flexDirection: "column",
+  gap: "10px",
+  marginTop: "12px",
+};
+
+const passphraseInputStyle = {
+  padding: "16px",
+  fontSize: "16px",
+  borderRadius: "10px",
+  border: "1px solid #d7ddf3",
+  outline: "none",
+  boxSizing: "border-box",
+};
+
+const passphraseVisibilityLabelStyle = {
+  display: "flex",
+  alignItems: "center",
+  gap: "8px",
+  fontSize: "14px",
+  color: "#2c3e50",
+};
+
+const passphraseHintStyle = {
+  fontSize: "14px",
+  color: "#4a5b8c",
+  margin: 0,
+};
+
+const passphraseErrorStyle = {
+  fontSize: "14px",
+  color: "#c62828",
+  margin: 0,
+};
+
 const manualCopyContainerStyle = {
   marginTop: "24px",
   display: "flex",
@@ -232,6 +403,12 @@ const manualCopyInputStyle = {
 const manualCopyLabelStyle = {
   fontSize: "16px",
   fontWeight: "500",
+};
+
+const passphraseInfoNoteStyle = {
+  fontSize: "14px",
+  color: "#4a5b8c",
+  margin: 0,
 };
 
 const shareButtonStyle = {

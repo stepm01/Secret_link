@@ -1,11 +1,14 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEncryptedPayload } from "../utils/crypto";
 
+const PASS_PHRASE_NOTE = " Share the passphrase through a separate channel.";
+
 const useSecureLink = () => {
   const [status, setStatus] = useState({ type: null, message: "" });
   const [copied, setCopied] = useState(false);
   const [generatedLink, setGeneratedLink] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
+  const [linkRequiresPassphrase, setLinkRequiresPassphrase] = useState(false);
 
   const clipboardSupported = useMemo(() => {
     if (typeof navigator === "undefined") {
@@ -40,10 +43,11 @@ const useSecureLink = () => {
     setStatus({ type: null, message: "" });
     setCopied(false);
     setGeneratedLink("");
+    setLinkRequiresPassphrase(false);
   }, []);
 
   const createLink = useCallback(
-    async (secret) => {
+    async (secret, options = {}) => {
       if (!secret.trim()) {
         setStatus({
           type: "error",
@@ -56,6 +60,7 @@ const useSecureLink = () => {
       setStatus({ type: null, message: "" });
       setCopied(false);
       setGeneratedLink("");
+      setLinkRequiresPassphrase(false);
 
       try {
         const {
@@ -63,7 +68,11 @@ const useSecureLink = () => {
           ivBase64,
           saltBase64,
           passwordBase64,
-        } = await createEncryptedPayload(secret.trim());
+          passphraseSaltBase64,
+          requiresPassphrase,
+        } = await createEncryptedPayload(secret.trim(), {
+          passphrase: options.passphrase,
+        });
 
         const response = await fetch("/api/store-secret", {
           method: "POST",
@@ -86,10 +95,18 @@ const useSecureLink = () => {
           throw new Error("Server did not return a secure link.");
         }
 
-        const shareableLink = `${data.link}#key=${encodeURIComponent(
-          passwordBase64
-        )}`;
+        const fragmentParams = new URLSearchParams();
+        fragmentParams.set("key", passwordBase64);
+        if (requiresPassphrase && passphraseSaltBase64) {
+          fragmentParams.set("pps", passphraseSaltBase64);
+          fragmentParams.set("pp", "1");
+        }
+
+        const shareableLink = `${data.link}#${fragmentParams.toString()}`;
         setGeneratedLink(shareableLink);
+        setLinkRequiresPassphrase(requiresPassphrase);
+
+        const passphraseNote = requiresPassphrase ? PASS_PHRASE_NOTE : "";
 
         if (clipboardSupported) {
           try {
@@ -97,7 +114,7 @@ const useSecureLink = () => {
             setCopied(true);
             setStatus({
               type: "success",
-              message: "Secure link copied to clipboard.",
+              message: `Secure link copied to clipboard.${passphraseNote}`,
             });
 
             copyResetTimeout.current = window.setTimeout(() => {
@@ -108,13 +125,13 @@ const useSecureLink = () => {
             console.warn("Failed to copy to clipboard", clipboardError);
             setStatus({
               type: "info",
-              message: "Copy to clipboard failed. Use the link below to copy manually.",
+              message: `Copy to clipboard failed. Use the link below to copy manually.${passphraseNote}`,
             });
           }
         } else {
           setStatus({
             type: "info",
-            message: "Copy to clipboard is unavailable. Use the link below to copy manually.",
+            message: `Copy to clipboard is unavailable. Use the link below to copy manually.${passphraseNote}`,
           });
         }
 
@@ -126,6 +143,7 @@ const useSecureLink = () => {
           message:
             error instanceof Error ? error.message : "Unexpected error. Please try again.",
         });
+        setLinkRequiresPassphrase(false);
         return null;
       } finally {
         setIsProcessing(false);
@@ -145,7 +163,8 @@ const useSecureLink = () => {
         text: "One-time secret link",
         url: generatedLink,
       });
-      setStatus({ type: "success", message: "Secure link shared." });
+      const note = linkRequiresPassphrase ? PASS_PHRASE_NOTE : "";
+      setStatus({ type: "success", message: `Secure link shared.${note}` });
       return true;
     } catch (error) {
       if (error?.name === "AbortError") {
@@ -156,16 +175,16 @@ const useSecureLink = () => {
       setStatus({ type: "error", message: "Unable to share link on this device." });
       return false;
     }
-  }, [generatedLink, shareSupported]);
+  }, [generatedLink, linkRequiresPassphrase, shareSupported]);
 
   return {
     status,
-    setStatus,
     copied,
     generatedLink,
     isProcessing,
     clipboardSupported,
     shareSupported,
+    linkRequiresPassphrase,
     createLink,
     shareLink,
     resetFeedback,
