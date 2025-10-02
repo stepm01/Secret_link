@@ -3,6 +3,7 @@ import SecureLinkPage from "./ShowLink/SecureLinkPage";
 import useSecureLink from "../hooks/useSecureLink";
 
 const MIN_PASSPHRASE_LENGTH = 6;
+const MAX_PASSPHRASE_HINT_LENGTH = 120;
 
 const Body = () => {
   const [secret, setSecret] = useState("");
@@ -13,6 +14,8 @@ const Body = () => {
   const [passphraseConfirm, setPassphraseConfirm] = useState("");
   const [passphraseError, setPassphraseError] = useState("");
   const [showPassphrase, setShowPassphrase] = useState(false);
+  const [passphraseHint, setPassphraseHint] = useState("");
+  const [passphraseHintError, setPassphraseHintError] = useState("");
   const {
     status,
     copied,
@@ -20,6 +23,7 @@ const Body = () => {
     isProcessing,
     shareSupported,
     linkRequiresPassphrase,
+    linkIncludesPassphraseHint,
     createLink,
     shareLink,
     resetFeedback,
@@ -50,6 +54,9 @@ const Body = () => {
     if (passphraseError) {
       setPassphraseError("");
     }
+    if (passphraseHintError) {
+      setPassphraseHintError("");
+    }
     setSecret(event.target.value);
   };
 
@@ -57,12 +64,14 @@ const Body = () => {
     const shouldRequirePassphrase = event.target.checked;
     setRequirePassphrase(shouldRequirePassphrase);
     setPassphraseError("");
+    setPassphraseHintError("");
 
     if (shouldRequirePassphrase) {
       resetFeedback();
     } else {
       setPassphrase("");
       setPassphraseConfirm("");
+      setPassphraseHint("");
     }
   };
 
@@ -84,12 +93,24 @@ const Body = () => {
     setShowPassphrase(event.target.checked);
   };
 
+  const handlePassphraseHintChange = (event) => {
+    const nextValue = event.target.value;
+    if (
+      passphraseHintError &&
+      nextValue.trim().length <= MAX_PASSPHRASE_HINT_LENGTH
+    ) {
+      setPassphraseHintError("");
+    }
+    setPassphraseHint(nextValue);
+  };
+
   const handleCreateLink = async () => {
     if (isProcessing) {
       return;
     }
 
     let sanitizedPassphrase;
+    let sanitizedHint = "";
 
     if (requirePassphrase) {
       const trimmedPassphrase = passphrase.trim();
@@ -108,10 +129,23 @@ const Body = () => {
       }
 
       sanitizedPassphrase = trimmedPassphrase;
+
+      const trimmedHint = passphraseHint.trim();
+      if (trimmedHint.length > MAX_PASSPHRASE_HINT_LENGTH) {
+        setPassphraseHintError(
+          `Passphrase hint must be ${MAX_PASSPHRASE_HINT_LENGTH} characters or less.`
+        );
+        return;
+      }
+
+      sanitizedHint = trimmedHint;
+    } else if (passphraseHint) {
+      setPassphraseHint("");
     }
 
     const createdLink = await createLink(secret, {
       passphrase: sanitizedPassphrase,
+      passphraseHint: sanitizedHint,
     });
 
     if (createdLink) {
@@ -119,6 +153,8 @@ const Body = () => {
       if (requirePassphrase) {
         setPassphrase("");
         setPassphraseConfirm("");
+        setPassphraseHint("");
+        setPassphraseHintError("");
       }
     }
   };
@@ -206,6 +242,25 @@ const Body = () => {
                   {passphraseError && (
                     <p style={passphraseErrorStyle}>{passphraseError}</p>
                   )}
+                  <textarea
+                    rows={2}
+                    placeholder={`Optional hint for the recipient (${MAX_PASSPHRASE_HINT_LENGTH} characters max)`}
+                    value={passphraseHint}
+                    onChange={handlePassphraseHintChange}
+                    style={passphraseHintInputStyle}
+                    disabled={isProcessing}
+                  />
+                  <div style={passphraseHintFooterStyle}>
+                    <span style={passphraseHintInfoStyle}>
+                      This hint is attached to the link and visible to anyone who opens it.
+                    </span>
+                    <span style={passphraseHintCountStyle}>
+                      {passphraseHint.trim().length}/{MAX_PASSPHRASE_HINT_LENGTH}
+                    </span>
+                  </div>
+                  {passphraseHintError && (
+                    <p style={passphraseHintErrorStyle}>{passphraseHintError}</p>
+                  )}
                 </div>
               )}
               <button
@@ -233,6 +288,11 @@ const Body = () => {
                 {linkRequiresPassphrase && (
                   <p style={passphraseInfoNoteStyle}>
                     Requires the passphrase you set above.
+                  </p>
+                )}
+                {linkIncludesPassphraseHint && (
+                  <p style={passphraseInfoNoteStyle}>
+                    Passphrase hint is included with this link and visible to the recipient.
                   </p>
                 )}
                 {shareSupported && (
@@ -377,6 +437,38 @@ const passphraseHintStyle = {
 };
 
 const passphraseErrorStyle = {
+  fontSize: "14px",
+  color: "#c62828",
+  margin: 0,
+};
+
+const passphraseHintInputStyle = {
+  padding: "14px",
+  fontSize: "15px",
+  borderRadius: "10px",
+  border: "1px solid #d7ddf3",
+  outline: "none",
+  resize: "vertical",
+  minHeight: "60px",
+};
+
+const passphraseHintFooterStyle = {
+  display: "flex",
+  justifyContent: "space-between",
+  alignItems: "center",
+  fontSize: "13px",
+  color: "#4a5b8c",
+};
+
+const passphraseHintInfoStyle = {
+  marginRight: "12px",
+};
+
+const passphraseHintCountStyle = {
+  fontVariantNumeric: "tabular-nums",
+};
+
+const passphraseHintErrorStyle = {
   fontSize: "14px",
   color: "#c62828",
   margin: 0,

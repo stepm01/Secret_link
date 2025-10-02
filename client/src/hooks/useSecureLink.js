@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { createEncryptedPayload } from "../utils/crypto";
 
-const PASS_PHRASE_NOTE = " Share the passphrase through a separate channel.";
+const PASS_PHRASE_NOTE = "Share the passphrase through a separate channel.";
+const PASS_PHRASE_HINT_NOTE = "Any hint you add is visible to anyone with the link.";
 
 const useSecureLink = () => {
   const [status, setStatus] = useState({ type: null, message: "" });
@@ -9,6 +10,7 @@ const useSecureLink = () => {
   const [generatedLink, setGeneratedLink] = useState("");
   const [isProcessing, setIsProcessing] = useState(false);
   const [linkRequiresPassphrase, setLinkRequiresPassphrase] = useState(false);
+  const [linkIncludesPassphraseHint, setLinkIncludesPassphraseHint] = useState(false);
 
   const clipboardSupported = useMemo(() => {
     if (typeof navigator === "undefined") {
@@ -44,6 +46,7 @@ const useSecureLink = () => {
     setCopied(false);
     setGeneratedLink("");
     setLinkRequiresPassphrase(false);
+    setLinkIncludesPassphraseHint(false);
   }, []);
 
   const createLink = useCallback(
@@ -74,6 +77,10 @@ const useSecureLink = () => {
           passphrase: options.passphrase,
         });
 
+        const trimmedPassphraseHint = options.passphraseHint
+          ? options.passphraseHint.trim()
+          : "";
+
         const response = await fetch("/api/store-secret", {
           method: "POST",
           body: JSON.stringify({
@@ -100,13 +107,24 @@ const useSecureLink = () => {
         if (requiresPassphrase && passphraseSaltBase64) {
           fragmentParams.set("pps", passphraseSaltBase64);
           fragmentParams.set("pp", "1");
+          if (trimmedPassphraseHint) {
+            fragmentParams.set("hint", trimmedPassphraseHint);
+          }
         }
 
         const shareableLink = `${data.link}#${fragmentParams.toString()}`;
         setGeneratedLink(shareableLink);
         setLinkRequiresPassphrase(requiresPassphrase);
+        setLinkIncludesPassphraseHint(Boolean(trimmedPassphraseHint));
 
-        const passphraseNote = requiresPassphrase ? PASS_PHRASE_NOTE : "";
+        const notes = [];
+        if (requiresPassphrase) {
+          notes.push(PASS_PHRASE_NOTE);
+        }
+        if (trimmedPassphraseHint) {
+          notes.push(PASS_PHRASE_HINT_NOTE);
+        }
+        const supplementalNote = notes.length ? ` ${notes.join(" ")}` : "";
 
         if (clipboardSupported) {
           try {
@@ -114,7 +132,7 @@ const useSecureLink = () => {
             setCopied(true);
             setStatus({
               type: "success",
-              message: `Secure link copied to clipboard.${passphraseNote}`,
+              message: `Secure link copied to clipboard.${supplementalNote}`,
             });
 
             copyResetTimeout.current = window.setTimeout(() => {
@@ -125,13 +143,13 @@ const useSecureLink = () => {
             console.warn("Failed to copy to clipboard", clipboardError);
             setStatus({
               type: "info",
-              message: `Copy to clipboard failed. Use the link below to copy manually.${passphraseNote}`,
+              message: `Copy to clipboard failed. Use the link below to copy manually.${supplementalNote}`,
             });
           }
         } else {
           setStatus({
             type: "info",
-            message: `Copy to clipboard is unavailable. Use the link below to copy manually.${passphraseNote}`,
+            message: `Copy to clipboard is unavailable. Use the link below to copy manually.${supplementalNote}`,
           });
         }
 
@@ -144,6 +162,7 @@ const useSecureLink = () => {
             error instanceof Error ? error.message : "Unexpected error. Please try again.",
         });
         setLinkRequiresPassphrase(false);
+        setLinkIncludesPassphraseHint(false);
         return null;
       } finally {
         setIsProcessing(false);
@@ -163,7 +182,14 @@ const useSecureLink = () => {
         text: "One-time secret link",
         url: generatedLink,
       });
-      const note = linkRequiresPassphrase ? PASS_PHRASE_NOTE : "";
+      const notePieces = [];
+      if (linkRequiresPassphrase) {
+        notePieces.push(PASS_PHRASE_NOTE);
+      }
+      if (linkIncludesPassphraseHint) {
+        notePieces.push(PASS_PHRASE_HINT_NOTE);
+      }
+      const note = notePieces.length ? ` ${notePieces.join(" ")}` : "";
       setStatus({ type: "success", message: `Secure link shared.${note}` });
       return true;
     } catch (error) {
@@ -175,7 +201,7 @@ const useSecureLink = () => {
       setStatus({ type: "error", message: "Unable to share link on this device." });
       return false;
     }
-  }, [generatedLink, linkRequiresPassphrase, shareSupported]);
+  }, [generatedLink, linkIncludesPassphraseHint, linkRequiresPassphrase, shareSupported]);
 
   return {
     status,
@@ -185,6 +211,7 @@ const useSecureLink = () => {
     clipboardSupported,
     shareSupported,
     linkRequiresPassphrase,
+    linkIncludesPassphraseHint,
     createLink,
     shareLink,
     resetFeedback,

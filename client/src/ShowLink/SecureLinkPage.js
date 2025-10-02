@@ -12,6 +12,7 @@ const SecureLinkPage = ({ secretId }) => {
     passwordBase64: "",
     passphraseSaltBase64: "",
     requiresPassphrase: false,
+    passphraseHint: "",
   });
   const [passphrase, setPassphrase] = useState("");
   const [passphraseError, setPassphraseError] = useState("");
@@ -233,6 +234,11 @@ const SecureLinkPage = ({ secretId }) => {
       return (
         <div style={passphraseGateStyle}>
           {status.message && <p style={infoTextStyle}>{status.message}</p>}
+          {keyParams.passphraseHint && (
+            <p style={passphraseHintStyle}>
+              Hint: {keyParams.passphraseHint}
+            </p>
+          )}
           <form onSubmit={handlePassphraseSubmit} style={passphraseFormStyle}>
             <input
               type={showPassphrase ? "text" : "password"}
@@ -349,6 +355,12 @@ const passphraseFormStyle = {
   display: "flex",
   flexDirection: "column",
   gap: "10px",
+};
+
+const passphraseHintStyle = {
+  fontSize: "15px",
+  color: "#4a5b8c",
+  margin: 0,
 };
 
 const passphraseInputStyle = {

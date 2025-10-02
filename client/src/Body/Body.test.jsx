@@ -14,6 +14,7 @@ const setupHookMock = (overrides = {}) => {
     isProcessing: false,
     shareSupported: false,
     linkRequiresPassphrase: false,
+    linkIncludesPassphraseHint: false,
     createLink: jest.fn().mockResolvedValue("https://example.com"),
     shareLink: jest.fn(),
     resetFeedback: jest.fn(),
@@ -76,6 +77,16 @@ describe("Body", () => {
     await userEvent.click(createButton);
     expect(await screen.findByText(/passphrases do not match/i)).toBeInTheDocument();
     expect(hookValues.createLink).not.toHaveBeenCalled();
+
+    await userEvent.clear(passphraseConfirm);
+    await userEvent.type(passphraseConfirm, "longpass");
+
+    const hintInput = screen.getByPlaceholderText(/optional hint/i);
+    await userEvent.type(hintInput, "a".repeat(121));
+
+    await userEvent.click(createButton);
+    expect(await screen.findByText(/passphrase hint must be/i)).toBeInTheDocument();
+    expect(hookValues.createLink).not.toHaveBeenCalled();
   });
 
   test("submits passphrase-protected secret when validation passes", async () => {
@@ -94,12 +105,17 @@ describe("Body", () => {
 
     await userEvent.type(passphraseInput, "trustedpass");
     await userEvent.type(passphraseConfirm, "trustedpass");
+    await userEvent.type(
+      screen.getByPlaceholderText(/optional hint/i),
+      "Remember the color"
+    );
 
     await userEvent.click(screen.getByRole("button", { name: /create secure link/i }));
 
     await waitFor(() => {
       expect(hookValues.createLink).toHaveBeenCalledWith("Secret body", {
         passphrase: "trustedpass",
+        passphraseHint: "Remember the color",
       });
     });
   });

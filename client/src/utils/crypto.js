@@ -188,6 +188,7 @@ export const extractKeyFromHash = () => {
       passwordBase64: "",
       passphraseSaltBase64: "",
       requiresPassphrase: false,
+      passphraseHint: "",
     };
   }
 
@@ -200,5 +201,6 @@ export const extractKeyFromHash = () => {
     passwordBase64: params.get("key") || "",
     passphraseSaltBase64: params.get("pps") || "",
     requiresPassphrase: params.get("pp") === "1",
+    passphraseHint: params.get("hint") || "",
   };
 };
